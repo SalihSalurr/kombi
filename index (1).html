@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#c2410c">
+<title>Kombi Kontrol</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root {
+    --bg: #faf7f2; --kart: #ffffff; --metin: #1f1a17; --soluk: #7a6f66; --cizgi: #ece4da;
+    --vurgu: #c2410c; --vurgu-acik: #fff1e6; --iyi: #15803d; --uyari: #b45309; --hata: #b91c1c;
+    --golge: 0 1px 2px rgba(60,40,20,.06), 0 4px 16px rgba(60,40,20,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#171310; --kart:#221c18; --metin:#f3ece5; --soluk:#a89a8d; --cizgi:#352c25;
+            --vurgu:#fb923c; --vurgu-acik:#3a2414; --golge: none; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--metin); }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 14px 60px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin: 4px 2px 14px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--soluk);
+       margin: 0 0 12px; font-weight: 600; }
+  .kart { background: var(--kart); border: 1px solid var(--cizgi); border-radius: 16px;
+          padding: 16px; margin-bottom: 14px; box-shadow: var(--golge); }
+  .baglanti { font-size: 12px; display:flex; align-items:center; gap:6px; color: var(--soluk); }
+  .nokta { width:8px; height:8px; border-radius:50%; background: var(--soluk); }
+  .nokta.on { background: var(--iyi); } .nokta.err { background: var(--hata); }
+
+  /* Durum */
+  .durum-ust { display:flex; align-items:center; gap:14px; }
+  .durum-ikon { font-size: 40px; width:64px; height:64px; display:grid; place-items:center;
+                background: var(--vurgu-acik); border-radius: 18px; }
+  .durum-ad { font-size: 22px; font-weight: 700; }
+  .durum-alt { color: var(--soluk); font-size: 13px; }
+  .bilgiler { display:grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 14px; font-size: 13px; }
+  .bilgiler div span { display:block; color: var(--soluk); font-size: 12px; }
+  .serit { margin-top: 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px;
+           background: var(--vurgu-acik); color: var(--metin); display:none; }
+  .serit.goster { display:block; }
+  .serit.uyari { background: #fef3c7; color: #78350f; }
+  @media (prefers-color-scheme: dark) { .serit.uyari { background:#3b2a0a; color:#fcd34d; } }
+
+  /* Mod butonları */
+  .modlar { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mod-btn { border: 1.5px solid var(--cizgi); background: var(--kart); color: var(--metin);
+             border-radius: 12px; padding: 12px 8px; font: inherit; font-weight: 600; cursor: pointer;
+             display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .mod-btn .e { font-size: 22px; }
+  .mod-btn.aktif { border-color: var(--vurgu); background: var(--vurgu-acik); }
+  .mod-btn.hedef { border-style: dashed; border-color: var(--vurgu); }
+  .mod-btn:disabled { opacity: .5; cursor: default; }
+
+  /* Formlar */
+  label { font-size: 12px; color: var(--soluk); display:block; margin-bottom: 4px; }
+  input, select { width: 100%; font: inherit; color: var(--metin); background: var(--bg);
+                  border: 1px solid var(--cizgi); border-radius: 10px; padding: 9px 10px; }
+  .satir { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .satir3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  button.ana { width:100%; background: var(--vurgu); color: #fff; border: 0; border-radius: 10px;
+               padding: 11px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.ana:disabled { opacity: .5; }
+  button.ikincil { background: transparent; border: 1px solid var(--cizgi); color: var(--metin);
+                   border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  .gunler { display:flex; gap:5px; margin-bottom: 10px; flex-wrap: wrap; }
+  .gun { flex:1; min-width: 40px; text-align:center; padding: 8px 0; border-radius: 9px; cursor:pointer;
+         border: 1px solid var(--cizgi); font-size: 13px; font-weight: 600; user-select:none; }
+  .gun.secili { background: var(--vurgu); color: #fff; border-color: var(--vurgu); }
+
+  /* Listeler */
+  .liste { list-style:none; margin: 0 0 12px; padding: 0; }
+  .liste li { display:flex; align-items:center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--cizgi); }
+  .liste li:last-child { border-bottom: 0; }
+  .liste .ana-metin { flex:1; font-size: 14px; }
+  .liste .ana-metin small { display:block; color: var(--soluk); font-size: 12px; }
+  .liste.pasif-yok .pasif { opacity:.45; }
+  .bos { color: var(--soluk); font-size: 13px; padding: 4px 0 12px; }
+  .anahtar { position:relative; width:40px; height:24px; flex: none; }
+  .anahtar input { display:none; }
+  .anahtar span { position:absolute; inset:0; background: var(--cizgi); border-radius: 12px; cursor:pointer; transition:.15s; }
+  .anahtar span::after { content:""; position:absolute; width:18px; height:18px; left:3px; top:3px;
+                         background:#fff; border-radius:50%; transition:.15s; }
+  .anahtar input:checked + span { background: var(--vurgu); }
+  .anahtar input:checked + span::after { left: 19px; }
+  .sil { background:none; border:0; color: var(--soluk); font-size: 18px; cursor:pointer; padding: 4px 6px; }
+
+  details summary { cursor:pointer; font-weight:600; font-size: 14px; }
+  details[open] summary { margin-bottom: 12px; }
+  .not { font-size: 12px; color: var(--soluk); margin-top: 8px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(80px);
+           background: #1f1a17; color:#fff; padding: 10px 16px; border-radius: 10px; font-size: 14px;
+           transition: transform .2s; z-index: 10; max-width: 90%; }
+  .toast.goster { transform: translateX(-50%) translateY(0); }
+  .gizli { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🔥 Kombi Kontrol</h1>
+    <div class="baglanti"><div class="nokta" id="baglantiNokta"></div><span id="baglantiMetin">Bağlı değil</span></div>
+  </header>
+
+  <!-- Bağlantı ayarları (ilk açılışta) -->
+  <section class="kart" id="kurulumKart">
+    <h2>Bağlantı</h2>
+    <div style="margin-bottom:10px"><label>EMQX sunucu adresi</label><input id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com" autocomplete="off"></div>
+    <div class="satir">
+      <div><label>Kullanıcı adı</label><input id="kKullanici" autocomplete="off"></div>
+      <div><label>Şifre</label><input id="kSifre" type="password" autocomplete="off"></div>
+    </div>
+    <div style="margin-bottom:12px"><label>Cihaz anahtarı (karttaki CIHAZ_ANAHTARI)</label><input id="kAnahtar" placeholder="evkombi" autocomplete="off"></div>
+    <button class="ana" id="kBaglan">Bağlan</button>
+    <p class="not">Bilgiler sadece bu tarayıcıda saklanır.</p>
+  </section>
+
+  <div id="uygulama" class="gizli">
+    <!-- Durum -->
+    <section class="kart">
+      <div class="durum-ust">
+        <div class="durum-ikon" id="dIkon">…</div>
+        <div>
+          <div class="durum-ad" id="dAd">Bekleniyor</div>
+          <div class="durum-alt" id="dAlt">Kartın ilk bağlantısı bekleniyor</div>
+        </div>
+      </div>
+      <div class="bilgiler">
+        <div><span>Son görülme</span><b id="dSon">—</b></div>
+        <div><span>Sonraki uyanma</span><b id="dUyanma">—</b></div>
+        <div><span>Sıradaki planlı işlem</span><b id="dSonraki">—</b></div>
+        <div><span>Pil</span><b id="dPil">—</b></div>
+      </div>
+      <div class="serit" id="dBekleyen"></div>
+      <div class="serit uyari" id="dUyari"></div>
+    </section>
+
+    <!-- Anlık kontrol -->
+    <section class="kart">
+      <h2>Şimdi</h2>
+      <div class="modlar" id="modlar"></div>
+      <p class="not">Seçtiğiniz mod, kart bir sonraki uyandığında uygulanır.</p>
+    </section>
+
+    <!-- Tek seferlik -->
+    <section class="kart">
+      <h2>Belirli bir saatte</h2>
+      <ul class="liste" id="zamanliListe"></ul>
+      <div class="satir" style="grid-template-columns:1.3fr 1fr">
+        <div><label>Ne zaman</label><input type="datetime-local" id="zZaman"></div>
+        <div><label>Mod</label><select id="zMod"></select></div>
+      </div>
+      <button class="ana" id="zEkle">Ekle</button>
+    </section>
+
+    <!-- Haftalık program -->
+    <section class="kart">
+      <h2>Haftalık program</h2>
+      <ul class="liste pasif-yok" id="programListe"></ul>
+      <details id="programForm">
+        <summary>+ Yeni program</summary>
+        <div class="gunler" id="pGunler"></div>
+        <div class="satir3">
+          <div><label>Açılış</label><input type="time" id="pAc" value="06:30"></div>
+          <div><label>Kapanış</label><input type="time" id="pKapat" value="08:00"></div>
+          <div><label>Mod</label><select id="pMod"></select></div>
+        </div>
+        <button class="ana" id="pEkle">Programı kaydet</button>
+        <p class="not">Kapanışı boş bırakırsanız sadece açar. Kapanış açılıştan önceyse ertesi gün kapatır.</p>
+      </details>
+    </section>
+
+    <!-- Geçmiş -->
+    <section class="kart">
+      <h2>Son işlemler</h2>
+      <ul class="liste" id="gecmisListe"></ul>
+    </section>
+
+    <!-- Ayarlar -->
+    <section class="kart">
+      <details>
+        <summary>Ayarlar</summary>
+        <label>Kontrol aralığı (anlık komutların gecikmesi)</label>
+        <div class="satir">
+          <select id="aAralik">
+            <option value="5">5 dakika</option><option value="10">10 dakika</option>
+            <option value="15">15 dakika</option><option value="30">30 dakika</option>
+            <option value="60">60 dakika</option>
+          </select>
+          <button class="ikincil" id="aAralikKaydet">Kaydet</button>
+        </div>
+        <p class="not" id="aPilTahmin"></p>
+
+        <label style="margin-top:16px">Durumu düzelt — kombi gerçekte hangi modda?</label>
+        <div class="satir">
+          <select id="aDuzeltMod"></select>
+          <button class="ikincil" id="aDuzelt">Düzelt</button>
+        </div>
+        <p class="not">Kart bir basışı kaçırdıysa ya da kombiye elle bastıysanız kullanın. Servo hareket etmez, sadece kartın bildiği durum değişir.</p>
+
+        <button class="ikincil" id="aCikis" style="margin-top:12px">Bağlantı bilgilerini değiştir</button>
+      </details>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const MODLAR = [
+  { ad: "Kapalı",           e: "⏻" },
+  { ad: "Sıcak su",         e: "🚿" },
+  { ad: "Sıcak su + Petek", e: "🚿🔥" },
+  { ad: "Petek",            e: "🔥" },
+];
+const GUNLER = [ [1,"Pzt"],[2,"Sal"],[3,"Çar"],[4,"Per"],[5,"Cum"],[6,"Cmt"],[0,"Paz"] ];
+const KAYNAK = { komut: "Uzaktan komut", program: "Program", duzeltme: "Durum düzeltme" };
+
+const $ = id => document.getElementById(id);
+let istemci = null, ayar = null, durum = null, ayarHazir = false, konuAyar = "", konuDurum = "";
+
+// ---------- Yardımcılar ----------
+function depoOku(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }
+function depoYaz(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("goster"); clearTimeout(t._z); t._z = setTimeout(() => t.classList.remove("goster"), 2600); }
+function iki(n) { return String(n).padStart(2, "0"); }
+function saatStr(sn) { const d = new Date(sn * 1000); return iki(d.getHours()) + ":" + iki(d.getMinutes()); }
+function gunSaatStr(sn) {
+  const d = new Date(sn * 1000), bugun = new Date(); const yarin = new Date(); yarin.setDate(bugun.getDate() + 1);
+  const ayni = (a, b) => a.toDateString() === b.toDateString();
+  const gun = ayni(d, bugun) ? "Bugün" : ayni(d, yarin) ? "Yarın" :
+              d.toLocaleDateString("tr-TR", { weekday: "short", day: "numeric", month: "short" });
+  return gun + " " + saatStr(sn);
+}
+function oncesi(sn) {
+  const f = Math.round(Date.now() / 1000 - sn);
+  if (f < 60) return "az önce"; if (f < 3600) return Math.floor(f / 60) + " dk önce";
+  if (f < 86400) return Math.floor(f / 3600) + " sa önce"; return Math.floor(f / 86400) + " gün önce";
+}
+function modSecenekleri(sel, varsayilan) {
+  sel.innerHTML = MODLAR.map((m, i) => `<option value="${i}">${m.e} ${m.ad}</option>`).join("");
+  sel.value = varsayilan;
+}
+
+// ---------- Bağlantı ----------
+function baglantiDurumu(metin, sinif) { $("baglantiMetin").textContent = metin; $("baglantiNokta").className = "nokta " + (sinif || ""); }
+
+function baglan() {
+  const host = depoOku("kHost").trim(), kul = depoOku("kKullanici"), sif = depoOku("kSifre"), anahtar = depoOku("kAnahtar").trim();
+  if (!host || !anahtar) return;
+  $("kurulumKart").classList.add("gizli"); $("uygulama").classList.remove("gizli");
+  konuAyar = `kombi/${anahtar}/ayar`; konuDurum = `kombi/${anahtar}/durum`;
+  const url = host.includes("://") ? host : `wss://${host}:8084/mqtt`;
+  if (istemci) istemci.end(true);
+  ayar = null; durum = null; ayarHazir = false;
+  baglantiDurumu("Bağlanıyor…");
+  istemci = mqtt.connect(url, {
+    username: kul, password: sif, clientId: "web-" + Math.random().toString(16).slice(2, 10),
+    reconnectPeriod: 4000, connectTimeout: 10000, clean: true,
+  });
+  istemci.on("connect", () => {
+    baglantiDurumu("Bağlı", "on");
+    istemci.subscribe([konuAyar, konuDurum], { qos: 1 }, () => {
+      setTimeout(() => { if (!ayarHazir) { ayarHazir = true; ayar = ayar || yeniAyar(); ciz(); } }, 2500);
+    });
+  });
+  istemci.on("reconnect", () => baglantiDurumu("Yeniden bağlanıyor…"));
+  istemci.on("close", () => baglantiDurumu("Bağlantı yok", "err"));
+  istemci.on("error", e => { baglantiDurumu("Hata: " + (e.message || e), "err"); });
+  istemci.on("message", (konu, veri) => {
+    let j; try { j = JSON.parse(veri.toString()); } catch { return; }
+    if (konu === konuAyar) { ayar = j; ayarHazir = true; }
+    if (konu === konuDurum) durum = j;
+    ciz();
+  });
+}
+
+function yeniAyar() { return { rev: 0, aralik: 10, programlar: [], zamanli: [], komut: null, duzelt: null }; }
+
+function ayarGonder(degistir, mesaj) {
+  if (!istemci || !istemci.connected) { toast("Bağlantı yok"); return; }
+  if (!ayarHazir) { toast("Ayarlar henüz yüklenmedi, birkaç saniye bekleyin"); return; }
+  const y = JSON.parse(JSON.stringify(ayar || yeniAyar()));
+  degistir(y);
+  const simdi = Math.floor(Date.now() / 1000);
+  y.zamanli = (y.zamanli || []).filter(z => z.t > simdi - 3600);   // geçmiş tek seferlikleri temizle
+  y.rev = Date.now();
+  istemci.publish(konuAyar, JSON.stringify(y), { qos: 1, retain: true }, err => {
+    if (err) toast("Gönderilemedi: " + err.message); else toast(mesaj || "Kaydedildi");
+  });
+  ayar = y; ciz();
+}
+
+// ---------- Çizim ----------
+function ciz() {
+  const a = ayar || yeniAyar(), d = durum;
+  const simdi = Date.now() / 1000;
+
+  // Durum kartı
+  const komutBekliyor = a.komut && (!d || d.komutId !== a.komut.id);
+  const ayarBekliyor = d && a.rev && d.rev !== a.rev;
+  if (d) {
+    const m = MODLAR[d.mod] || MODLAR[0];
+    $("dIkon").textContent = m.e; $("dAd").textContent = m.ad;
+    $("dAlt").textContent = komutBekliyor ? "→ " + MODLAR[a.komut.mod].ad + " olacak" : "Kartın bildiği son durum";
+    $("dSon").textContent = d.t ? oncesi(d.t) : "—";
+    $("dUyanma").textContent = d.sonrakiUyanma ? gunSaatStr(d.sonrakiUyanma) : "—";
+    $("dSonraki").textContent = d.sonraki ? gunSaatStr(d.sonraki.t) + " · " + MODLAR[d.sonraki.mod].ad : "Yok";
+    $("dPil").textContent = d.pilYuzde >= 0 ? `%${d.pilYuzde} (${Number(d.pil).toFixed(2)} V)` : "Ölçülmüyor";
+  }
+  const bekleyen = $("dBekleyen");
+  if (komutBekliyor || ayarBekliyor) {
+    const ne = d && d.sonrakiUyanma && d.sonrakiUyanma > simdi
+      ? "Kart en geç " + saatStr(d.sonrakiUyanma) + " civarında uyanınca uygulanacak."
+      : "Kart bir sonraki uyanışında uygulayacak.";
+    bekleyen.textContent = (komutBekliyor ? "Komut gönderildi. " : "Değişiklikler gönderildi. ") + ne;
+    bekleyen.classList.add("goster");
+  } else bekleyen.classList.remove("goster");
+
+  const uyari = $("dUyari"); let u = "";
+  if (d && d.sonrakiUyanma && simdi > d.sonrakiUyanma + 300) u = "Kart beklenen saatte bağlanmadı. Pil bitmiş ya da Wi-Fi'ye ulaşamıyor olabilir.";
+  else if (d && d.pilYuzde >= 0 && d.pilYuzde <= 15) u = "Pil azaldı, şarj etmeyi unutmayın.";
+  uyari.textContent = u; uyari.classList.toggle("goster", !!u);
+
+  // Mod butonları
+  const hedef = komutBekliyor ? a.komut.mod : -1;
+  $("modlar").innerHTML = MODLAR.map((m, i) =>
+    `<button class="mod-btn ${d && d.mod === i && !komutBekliyor ? "aktif" : ""} ${hedef === i ? "hedef" : ""}" data-mod="${i}">
+       <span class="e">${m.e}</span>${m.ad}</button>`).join("");
+
+  // Tek seferlikler
+  const zl = (a.zamanli || []).filter(z => z.t > simdi - 60).sort((x, y) => x.t - y.t);
+  $("zamanliListe").innerHTML = zl.length ? zl.map(z =>
+    `<li><div class="ana-metin">${gunSaatStr(z.t)}<small>${MODLAR[z.mod].e} ${MODLAR[z.mod].ad}</small></div>
+     <button class="sil" data-zsil="${z.id}" title="Sil">✕</button></li>`).join("")
+    : `<li class="bos">Planlanmış tek seferlik işlem yok</li>`;
+
+  // Programlar
+  const pl = a.programlar || [];
+  $("programListe").innerHTML = pl.length ? pl.map(p => {
+    const gunler = GUNLER.filter(([n]) => p.gunler.includes(n)).map(([, ad]) => ad).join(", ");
+    const zaman = p.kapat ? `${p.ac} – ${p.kapat}` : `${p.ac}'de aç`;
+    return `<li class="${p.aktif ? "" : "pasif"}">
+      <label class="anahtar"><input type="checkbox" data-paktif="${p.id}" ${p.aktif ? "checked" : ""}><span></span></label>
+      <div class="ana-metin">${zaman}<small>${gunler} · ${MODLAR[p.mod].ad}</small></div>
+      <button class="sil" data-psil="${p.id}" title="Sil">✕</button></li>`;
+  }).join("") : `<li class="bos">Henüz program yok</li>`;
+
+  // Geçmiş
+  const g = (d && d.gecmis) ? [...d.gecmis].reverse() : [];
+  $("gecmisListe").innerHTML = g.length ? g.map(x =>
+    `<li><div class="ana-metin">${MODLAR[x.eski].ad} → <b>${MODLAR[x.yeni].ad}</b>
+      <small>${x.t ? gunSaatStr(x.t) : "Saat bilinmiyor"} · ${KAYNAK[x.k] || x.k}</small></div></li>`).join("")
+    : `<li class="bos">Kayıt yok</li>`;
+
+  // Ayarlar
+  if (document.activeElement !== $("aAralik")) $("aAralik").value = String(a.aralik || 10);
+  pilTahmini();
+}
+
+function pilTahmini() {
+  const dk = Number($("aAralik").value);
+  const gunluk = (1440 / dk) * 0.15 + 10;          // uyanma başına ~0.15 mAh + uyku ~10 mAh/gün
+  const gun = Math.round(1300 / gunluk);
+  $("aPilTahmin").textContent = `1500 mAh pil ile yaklaşık ${gun} gün (kabaca tahmin; kartın uyku akımına bağlı).`;
+}
+
+// ---------- Olaylar ----------
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-mod]");
+  if (b) {
+    const mod = Number(b.dataset.mod);
+    ayarGonder(y => { y.komut = { id: Date.now(), mod }; }, MODLAR[mod].ad + " komutu gönderildi");
+    return;
+  }
+  const zs = e.target.closest("[data-zsil]");
+  if (zs) { ayarGonder(y => { y.zamanli = y.zamanli.filter(z => z.id !== zs.dataset.zsil); }, "Silindi"); return; }
+  const ps = e.target.closest("[data-psil]");
+  if (ps) { ayarGonder(y => { y.programlar = y.programlar.filter(p => p.id !== ps.dataset.psil); }, "Program silindi"); return; }
+  const gun = e.target.closest(".gun");
+  if (gun) gun.classList.toggle("secili");
+});
+document.addEventListener("change", e => {
+  const pa = e.target.closest("[data-paktif]");
+  if (pa) ayarGonder(y => { const p = y.programlar.find(p => p.id === pa.dataset.paktif); if (p) p.aktif = pa.checked; },
+                     pa.checked ? "Program açıldı" : "Program durduruldu");
+});
+
+$("zEkle").onclick = () => {
+  const v = $("zZaman").value;
+  if (!v) return toast("Tarih ve saat seçin");
+  const t = Math.floor(new Date(v).getTime() / 1000);
+  if (t <= Date.now() / 1000) return toast("Geçmiş bir zaman seçtiniz");
+  const mod = Number($("zMod").value);
+  ayarGonder(y => { y.zamanli = y.zamanli || []; y.zamanli.push({ id: "z" + Date.now().toString(36), t, mod }); },
+             gunSaatStr(t) + " için eklendi");
+};
+
+$("pEkle").onclick = () => {
+  const gunler = [...document.querySelectorAll(".gun.secili")].map(g => Number(g.dataset.gun));
+  const ac = $("pAc").value, kapat = $("pKapat").value, mod = Number($("pMod").value);
+  if (!gunler.length) return toast("En az bir gün seçin");
+  if (!ac) return toast("Açılış saatini girin");
+  if (mod === 0) return toast("Açılış modu 'Kapalı' olamaz");
+  ayarGonder(y => { y.programlar = y.programlar || [];
+    y.programlar.push({ id: "p" + Date.now().toString(36), gunler, ac, kapat: kapat || "", mod, aktif: true }); }, "Program kaydedildi");
+  $("programForm").open = false;
+};
+
+$("aAralik").onchange = pilTahmini;
+$("aAralikKaydet").onclick = () => { const v = Number($("aAralik").value); ayarGonder(y => { y.aralik = v; }, `Kontrol aralığı ${v} dk`); };
+$("aDuzelt").onclick = () => {
+  const mod = Number($("aDuzeltMod").value);
+  ayarGonder(y => { y.duzelt = { id: Date.now(), mod }; }, "Durum '" + MODLAR[mod].ad + "' olarak düzeltilecek");
+};
+$("aCikis").onclick = () => {
+  if (istemci) istemci.end(true);
+  ["kHost", "kKullanici", "kSifre", "kAnahtar"].forEach(k => $(k).value = depoOku(k));
+  $("kurulumKart").classList.remove("gizli"); $("uygulama").classList.add("gizli");
+  baglantiDurumu("Bağlı değil");
+};
+$("kBaglan").onclick = () => {
+  ["kHost", "kKullanici", "kSifre", "kAnahtar"].forEach(k => depoYaz(k, $(k).value.trim()));
+  if (!$("kHost").value.trim() || !$("kAnahtar").value.trim()) return toast("Adres ve cihaz anahtarı gerekli");
+  baglan();
+};
+
+// ---------- Başlangıç ----------
+$("pGunler").innerHTML = GUNLER.map(([n, ad]) => `<div class="gun ${n >= 1 && n <= 5 ? "secili" : ""}" data-gun="${n}">${ad}</div>`).join("");
+modSecenekleri($("zMod"), 0);
+modSecenekleri($("pMod"), 2);
+modSecenekleri($("aDuzeltMod"), 0);
+(() => { const d = new Date(Date.now() + 3600e3); d.setMinutes(0, 0, 0);
+  $("zZaman").value = `${d.getFullYear()}-${iki(d.getMonth() + 1)}-${iki(d.getDate())}T${iki(d.getHours())}:00`; })();
+if (depoOku("kHost") && depoOku("kAnahtar")) baglan();
+else ["kHost", "kKullanici", "kSifre", "kAnahtar"].forEach(k => $(k).value = depoOku(k));
+setInterval(() => { if (durum) ciz(); }, 30000);
+</script>
+</body>
+</html>
